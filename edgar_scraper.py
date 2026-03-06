@@ -2,15 +2,16 @@
 """
 SEC EDGAR Filings Scraper
 
-Scrapes recent filings from the SEC EDGAR full-text search system,
-truncates filing content to a summary, and saves results as JSON/CSV
-organized by company name. Designed to be run daily.
+Scrapes recent filings from the SEC EDGAR submissions API
+(data.sec.gov), truncates filing content to a summary, and saves
+results as JSON/CSV organized by company name. Designed to be run daily.
 """
 
 import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta
@@ -19,14 +20,7 @@ import requests
 
 # SEC requires a User-Agent header with contact info
 DEFAULT_USER_AGENT = "EdgarScraper/1.0 (your-email@example.com)"
-EDGAR_FULL_TEXT_SEARCH = "https://efts.sec.gov/LATEST/search-index"
-EDGAR_COMPANY_SEARCH = "https://efts.sec.gov/LATEST/search-index"
-EDGAR_SUBMISSIONS_BASE = "https://data.sec.gov/submissions"
-EDGAR_FILING_SEARCH = "https://efts.sec.gov/LATEST/search-index"
-EDGAR_SEARCH_API = "https://efts.sec.gov/LATEST/search-index"
-
-# The working EDGAR full-text search endpoint
-EDGAR_EFTS_API = "https://efts.sec.gov/LATEST/search-index"
+EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions"
 
 OUTPUT_DIR = "edgar_data"
 MAX_TRUNCATE_LENGTH = 500  # characters to keep from filing description
@@ -40,66 +34,14 @@ def get_headers(user_agent: str) -> dict:
     }
 
 
-def fetch_recent_filings(
-    filing_types: list[str],
-    date_from: str,
-    date_to: str,
-    user_agent: str,
-    max_results: int = 100,
-) -> list[dict]:
-    """
-    Fetch recent filings from EDGAR full-text search API.
-
-    Args:
-        filing_types: List of form types to search (e.g. ["10-K", "10-Q", "8-K"])
-        date_from: Start date in YYYY-MM-DD format
-        date_to: End date in YYYY-MM-DD format
-        user_agent: User-Agent string (SEC requires contact info)
-        max_results: Maximum number of results to return
-
-    Returns:
-        List of filing dictionaries
-    """
-    url = "https://efts.sec.gov/LATEST/search-index"
-    headers = get_headers(user_agent)
-    all_filings = []
-
-    for form_type in filing_types:
-        params = {
-            "q": f'formType:"{form_type}"',
-            "dateRange": "custom",
-            "startdt": date_from,
-            "enddt": date_to,
-            "forms": form_type,
-        }
-
-        # Use the documented EDGAR full-text search API
-        search_url = "https://efts.sec.gov/LATEST/search-index"
-        try:
-            resp = requests.get(search_url, params=params, headers=headers, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            hits = data.get("hits", {}).get("hits", [])
-            for hit in hits[:max_results]:
-                source = hit.get("_source", {})
-                all_filings.append(source)
-        except requests.exceptions.HTTPError:
-            # Fall back to the standard EDGAR search API
-            pass
-
-    # Primary approach: use the EDGAR XBRL companyfacts / submissions API
-    # which is more reliable and well-documented
-    return all_filings
-
-
-def fetch_company_filings_by_cik(
+def fetch_company_filings(
     cik: str,
     filing_types: list[str],
     user_agent: str,
 ) -> list[dict]:
     """Fetch filings for a specific company by CIK number."""
     cik_padded = cik.zfill(10)
-    url = f"https://data.sec.gov/submissions/CIK{cik_padded}.json"
+    url = f"{EDGAR_SUBMISSIONS_URL}/CIK{cik_padded}.json"
     headers = get_headers(user_agent)
 
     resp = requests.get(url, headers=headers, timeout=30)
@@ -140,21 +82,6 @@ def fetch_company_filings_by_cik(
     return filings
 
 
-def search_companies(query: str, user_agent: str) -> list[dict]:
-    """Search for companies by name or ticker using EDGAR company search."""
-    url = "https://efts.sec.gov/LATEST/search-index"
-    headers = get_headers(user_agent)
-
-    params = {"q": query, "dateRange": "custom", "forms": "10-K"}
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("hits", {}).get("hits", [])
-    except Exception:
-        return []
-
-
 def fetch_filing_content(filing_url: str, user_agent: str) -> str:
     """Fetch the raw text content of a filing document."""
     headers = get_headers(user_agent)
@@ -170,9 +97,6 @@ def truncate_content(text: str, max_length: int = MAX_TRUNCATE_LENGTH) -> str:
     """Truncate filing content to a manageable summary length."""
     if not text:
         return ""
-    # Strip HTML tags roughly for plain-text truncation
-    import re
-
     clean = re.sub(r"<[^>]+>", " ", text)
     clean = re.sub(r"\s+", " ", clean).strip()
     if len(clean) <= max_length:
@@ -210,7 +134,7 @@ def scrape_filings(
     for cik in ciks:
         print(f"Fetching filings for CIK {cik}...")
         try:
-            filings = fetch_company_filings_by_cik(cik, filing_types, user_agent)
+            filings = fetch_company_filings(cik, filing_types, user_agent)
         except Exception as e:
             print(f"  Error fetching CIK {cik}: {e}")
             continue
