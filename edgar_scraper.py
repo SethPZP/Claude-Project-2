@@ -208,9 +208,9 @@ def main():
     )
     parser.add_argument(
         "--forms",
-        nargs="+",
-        default=["10-K", "10-Q", "8-K"],
-        help="Filing form types to include (default: 10-K 10-Q 8-K)",
+        nargs="*",
+        default=[],
+        help="Filing form types to include (default: all types)",
     )
     parser.add_argument(
         "--days",
@@ -252,7 +252,7 @@ def main():
     print("SEC EDGAR Filings Scraper")
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"CIKs: {', '.join(args.ciks)}")
-    print(f"Forms: {', '.join(args.forms)}")
+    print(f"Forms: {', '.join(args.forms) if args.forms else 'ALL'}")
     print(f"Days back: {args.days}")
     print("=" * 60)
 
